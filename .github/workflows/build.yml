@@ -90,5 +90,5 @@ jobs:
         with:
           name: SDM425-Kernel-Flashable
           path: /tmp/artifact/*.zip
-          retention-days: 7 
+          retention-days: 7
 
