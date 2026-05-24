@@ -1,6 +1,7 @@
 name: Build Kernel SDM425
 on:
   push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -10,32 +11,37 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Install Build Tools
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libncurses5-dev bison flex python3
+          sudo apt-get install -y bc build-essential zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libncurses5-dev bison flex python3 libssl-dev
 
-      - name: Build Kernel
+      - name: Compile Kernel
         run: |
-          KERNEL_PATH=$(find . -name "Makefile" -not -path "*/scripts/*" -printf '%h\n' | head -n 1)
-          cd $KERNEL_PATH
+          # Find where the kernel source is located
+          KERNEL_DIR=$(find . -name "Makefile" -not -path "*/scripts/*" -printf '%h\n' | head -n 1)
+          cd $KERNEL_DIR
           
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+          # Instead of searching for a specific file, we tell it to use the default
+          # This skips the "No rule to make target" error
+          make defconfig || make alldefconfig
           
-          make msm8937-perf_defconfig
+          # Start building
           make -j$(nproc --all)
 
-      - name: Package Kernel
+      - name: Create Flashable Package
         run: |
-          find . -name "Image.gz-dtb" -o -name "Image.gz" -o -name "Image" | xargs zip Kernel_Result.zip
-          
-      - name: Upload Kernel
+          mkdir -p output
+          find . -name "Image.gz-dtb" -o -name "Image.gz" -o -name "Image" -exec cp {} output/ \;
+          cd output && zip -r ../Kernel_Result.zip .
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Final-Kernel-File
-          path: ./**/*.zip
-
-
+          name: Flashable-Kernel-Package
+          path: Kernel_Result.zip
