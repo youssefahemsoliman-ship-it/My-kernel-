@@ -451,8 +451,8 @@ export RCS_TAR_IGNORE := --exclude SCCS --exclude BitKeeper --exclude .svn \
 # Basic helpers built in scripts/
 PHONY += scripts_basic
 scripts_basic:
-	make -f scripts/Makefile.build obj=scripts/basic
-	$(Q)rm -f .tmp_quiet_recordmcount
+	@make -f scripts/Makefile.build obj=scripts/basic
+	@rm -f .tmp_quiet_recordmcount
 
 # To avoid any implicit rule to kick in, define an empty command.
 scripts/basic/%: scripts_basic ;
