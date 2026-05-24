@@ -11,34 +11,108 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install Build Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libncurses5-dev bison flex python3 libssl-dev
+          sudo apt-get install -y bc build-essential zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libncurses5-dev bison flex python3 device-tree-compiler
 
-      - name: Compile Kernel
+      - name: Find Makefile (if missing)
         run: |
-          # 1. Find the exact Kernel directory
-          KERNEL_ROOT=$(find . -name "Makefile" -not -path "*/scripts/*" -printf '%h\n' | head -n 1)
-          cd $KERNEL_ROOT
+          if [ ! -f Makefile ]; then
+            echo "Makefile not found in root, searching..."
+            MF=$(find . -maxdepth 2 -type f -name "Makefile" | head -n 1)
+            if [ -n "$MF" ]; then
+              cd $(dirname "$MF")
+              echo "Changed directory to $(pwd)"
+            else
+              echo "ERROR: No Makefile found"
+              exit 1
+            fi
+          else
+            echo "Makefile found in current directory"
+          fi
+
+      - name: Select best defconfig
+        run: |
+          CONFIG_DIR="arch/arm64/configs"
+          if [ ! -d "$CONFIG_DIR" ]; then
+            echo "ERROR: $CONFIG_DIR not found"
+            exit 1
+          fi
           
-          # 2. Setup Environment
+          # Try to find SDM425 specific config first, then any _defconfig
+          DEFCONFIG=$(find "$CONFIG_DIR" -type f \( -name "*sdm425*_defconfig" -o -name "*msm8937*_defconfig" \) | head -n 1)
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find "$CONFIG_DIR" -maxdepth 2 -type f -name "*_defconfig" | head -n 1)
+          fi
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find "$CONFIG_DIR" -maxdepth 2 -type f | head -n 1)
+          fi
+          
+          DEFCONFIG_NAME=$(basename "$DEFCONFIG")
+          echo "Selected defconfig: $DEFCONFIG_NAME"
+          echo "DEFCONFIG_NAME=$DEFCONFIG_NAME" >> $GITHUB_ENV
+
+      - name: Build Kernel
+        run: |
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # 3. Explicitly tell the tool where the configs are
-          # This ensures it looks exactly in arch/arm64/configs/
-          KCONFIG_CONFIG=arch/arm64/configs/msm8937-perf_defconfig
+          # Clean previous builds
+          make clean
+          make mrproper
           
-          # 4. Starting the build with the specific path
-          make msm8937-perf_defconfig
-          make -j$(nproc --all)
+          # Apply selected defconfig
+          make O=out $DEFCONFIG_NAME
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply defconfig"
+            exit 1
+          fi
+          
+          # Build kernel
+          make -j$(nproc --all) O=out
+          if [ $? -ne 0 ]; then
+            echo "Kernel build failed"
+            exit 1
+          fi
 
-      - name: Upload Result
+      - name: Package Kernel as Flashable Zip (AnyKernel3)
+        run: |
+          # Clone AnyKernel3 if not present
+          if [ ! -d "AnyKernel3" ]; then
+            git clone https://github.com/osm0sis/AnyKernel3.git
+          fi
+          
+          # Find kernel image (Image.gz-dtb preferred, fallback to Image)
+          KERNEL_IMG=$(find out/arch/arm64/boot -type f -name "Image.gz-dtb" | head -n 1)
+          if [ -z "$KERNEL_IMG" ]; then
+            KERNEL_IMG=$(find out/arch/arm64/boot -type f -name "Image" | head -n 1)
+          fi
+          
+          if [ -z "$KERNEL_IMG" ]; then
+            echo "ERROR: Kernel image not found"
+            exit 1
+          fi
+          
+          # Copy to AnyKernel3 folder
+          cp "$KERNEL_IMG" AnyKernel3/Image.gz-dtb
+          cd AnyKernel3
+          
+          # Create flashable zip
+          ZIP_NAME="SDM425_Kernel_$(date +%Y%m%d_%H%M%S).zip"
+          zip -r9 "$ZIP_NAME" . -x .git README.md *-placeholder
+          echo "ZIP_FILE=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          
+          mkdir -p /tmp/artifact
+          cp "$ZIP_NAME" /tmp/artifact/
+
+      - name: Upload Flashable Kernel Zip
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-Image
-          path: ./**/arch/arm64/boot/Image*
+          name: SDM425-Kernel-Flashable
+          path: /tmp/artifact/*.zip
+          retention-days: 66
 
