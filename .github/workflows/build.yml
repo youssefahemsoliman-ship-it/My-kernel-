@@ -1,94 +1,74 @@
-name: Build Kernel SDM425 - Root Makefile Only
+name: CI (Custom Kernel Builder)
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
+    inputs:
+      kernel-url:
+        description: 'Kernel repository URL (e.g., https://github.com/user/kernel)'
+        required: true
+        type: string
+      kernel-branch:
+        description: 'Branch name (e.g., main or twelve)'
+        required: true
+        type: string
+      config:
+        description: 'defconfig file (e.g., vendor_defconfig)'
+        required: true
+        type: string
+      arch:
+        description: 'Kernel architecture (for 64-bit set arm64)'
+        required: false
+        default: 'arm64'
+        type: string
+      aosp-gcc:
+        description: 'Use AOSP GCC toolchain'
+        required: false
+        default: true
+        type: boolean
+      aosp-clang:
+        description: 'Use AOSP Clang toolchain'
+        required: false
+        default: true
+        type: boolean
+      android-version:
+        description: 'Android version (e.g., 12, 13, 14, 15, 16)'
+        required: false
+        default: '16'
+        type: string
+      aosp-clang-version:
+        description: 'Clang version (e.g., r383902 or r450784d)'
+        required: false
+        default: 'r383902'
+        type: string
+      anykernel3:
+        description: 'Use AnyKernel3 to generate a flashable zip?'
+        required: false
+        default: true
+        type: boolean
+      release:
+        description: 'Create a GitHub Release?'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-kernel:
+    name: Build Kernel (${{ github.event.inputs.kernel-branch }})
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-
-      - name: Install Build Tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc build-essential zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libncurses5-dev bison flex python3 device-tree-compiler
-
-      - name: Check Makefile in root directory only
-        run: |
-          if [ ! -f Makefile ]; then
-            echo "ERROR: Makefile not found in root directory"
-            exit 1
-          else
-            echo "Makefile found in root directory"
-          fi
-
-      - name: Find and Select Defconfig
-        run: |
-          CONFIG_DIR="arch/arm64/configs"
-          if [ ! -d "$CONFIG_DIR" ]; then
-            echo "ERROR: $CONFIG_DIR not found"
-            exit 1
-          fi
-          
-          DEFCONFIG=$(find "$CONFIG_DIR" -type f \( -name "*sdm425*_defconfig" -o -name "*msm8937*_defconfig" \) | head -n 1)
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find "$CONFIG_DIR" -maxdepth 2 -type f -name "*_defconfig" | head -n 1)
-          fi
-          DEFCONFIG_NAME=$(basename "$DEFCONFIG")
-          echo "Selected defconfig: $DEFCONFIG_NAME"
-          echo "DEFCONFIG_NAME=$DEFCONFIG_NAME" >> $GITHUB_ENV
-
-      - name: Build Kernel
-        run: |
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          
-          make clean
-          make mrproper
-          make O=out $DEFCONFIG_NAME
-          if [ $? -ne 0 ]; then
-            echo "Failed to apply defconfig"
-            exit 1
-          fi
-          
-          make -j$(nproc --all) O=out
-          if [ $? -ne 0 ]; then
-            echo "Kernel build failed"
-            exit 1
-          fi
-
-      - name: Package Kernel as Flashable Zip
-        run: |
-          if [ ! -d "AnyKernel3" ]; then
-            git clone https://github.com/osm0sis/AnyKernel3.git
-          fi
-          
-          KERNEL_IMG=$(find out/arch/arm64/boot -type f -name "Image.gz-dtb" | head -n 1)
-          if [ -z "$KERNEL_IMG" ]; then
-            KERNEL_IMG=$(find out/arch/arm64/boot -type f -name "Image" | head -n 1)
-          fi
-          
-          if [ -z "$KERNEL_IMG" ]; then
-            echo "ERROR: Kernel image not found"
-            exit 1
-          fi
-          
-          cp "$KERNEL_IMG" AnyKernel3/Image.gz-dtb
-          cd AnyKernel3
-          ZIP_NAME="SDM425_Kernel_$(date +%Y%m%d_%H%M%S).zip"
-          zip -r9 "$ZIP_NAME" . -x .git README.md *-placeholder
-          mkdir -p /tmp/artifact
-          cp "$ZIP_NAME" /tmp/artifact/
-
-      - name: Upload Flashable Kernel Zip
-        uses: actions/upload-artifact@v4
+      - name: Build
+        uses: dabao1955/kernel_build_action@main
         with:
-          name: SDM425-Kernel-Flashable
-          path: /tmp/artifact/*.zip
-          retention-days: 7
-
+          kernel-url: ${{ github.event.inputs.kernel-url }}
+          kernel-branch: ${{ github.event.inputs.kernel-branch }}
+          config: ${{ github.event.inputs.config }}
+          arch: ${{ github.event.inputs.arch }}
+          aosp-gcc: ${{ github.event.inputs.aosp-gcc }}
+          aosp-clang: ${{ github.event.inputs.aosp-clang }}
+          android-version: ${{ github.event.inputs.android-version }}
+          aosp-clang-version: ${{ github.event.inputs.aosp-clang-version }}
+          anykernel3: ${{ github.event.inputs.anykernel3 }}
+          release: ${{ github.event.inputs.release }}
+          access-token: ${{ secrets.GITHUB_TOKEN }}
