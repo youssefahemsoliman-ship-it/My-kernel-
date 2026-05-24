@@ -1,0 +1,35 @@
+name: Build Kernel SDM425
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential zip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libncurses5-dev bison flex python3
+
+      - name: Build Kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          make O=out msm8937-perf_defconfig
+          make -j$(nproc --all) O=out
+
+      - name: Package Kernel
+        run: |
+          find out/arch/arm64/boot/ -name "Image.gz-dtb" -o -name "Image.gz" -o -name "Image" | xargs zip Kernel_Result.zip
+          
+      - name: Upload Kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: Final-Kernel-File
+          path: ./*.zip
